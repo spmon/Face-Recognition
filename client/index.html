@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Hệ thống Nhận diện - Edge AI</title>
+    <title>Hệ thống Nhận diện - Edge AI (WebSocket)</title>
     <style>
         body { text-align: center; font-family: Arial, sans-serif; background: #1e1e1e; color: white; padding-top: 30px; }
         .camera-container { position: relative; display: inline-block; margin-top: 20px; }
@@ -14,7 +14,7 @@
     </style>
 </head>
 <body>
-    <h2>Hệ thống Nhận diện Khuôn mặt (Real-time)</h2>
+    <h2>Hệ thống Nhận diện Khuôn mặt Real-time (WebSocket)</h2>
     
     <button class="nav-btn" onclick="window.location.href='register.html'">➕ Sang trang Đăng ký người dùng</button>
 
@@ -30,6 +30,7 @@
     const canvas = document.getElementById('overlay');
     const ctx = canvas.getContext('2d');
     const statusText = document.getElementById('status');
+    let ws; // Khai báo biến WebSocket toàn cục
 
     canvas.width = 640;
     canvas.height = 480;
@@ -43,69 +44,97 @@
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
             video.srcObject = stream;
-            statusText.innerText = "Hệ thống AI đang quét khuôn mặt...";
-            statusText.style.color = "#00ff00";
             
-            video.onloadedmetadata = () => { sendFrameToServer(); };
+            video.onloadedmetadata = () => { 
+                connectWebSocket(); // Camera lên hình thì mở kết nối WebSocket
+            };
         } catch (e) {
             statusText.innerText = "Lỗi: Không mở được Camera!";
             statusText.style.color = "red";
         }
     }
 
-    async function sendFrameToServer() {
-        // 1. Chụp frame và nén lại để giảm độ trễ
-        capCtx.drawImage(video, 0, 0, 640, 480);
-        const base64Image = captureCanvas.toDataURL('image/jpeg', 0.5); 
-
-        const formData = new FormData();
-        formData.append("image_base64", base64Image);
-
-        try {
-            // 2. Gọi API detect (vừa detect vừa search vector)
-            const response = await fetch('http://127.0.0.1:8000/detect', { method: 'POST', body: formData });
-            const data = await response.json();
-            
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            
-            // 3. Xử lý kết quả trả về từ trường "matches" trong main.py
-            if (data.matches && data.matches.length > 0) {
-                for (let face of data.matches) {
-                    const w = face.x2 - face.x1;
-                    const h = face.y2 - face.y1;
-                    
-                    // --- Đổi màu: Xanh cho người quen, Đỏ cho Unknown ---
-                    const isUnknown = face.name === "Unknown";
-                    const color = isUnknown ? "#ff4757" : "#2ed573";
-                    
-                    // Vẽ Bounding Box
-                    ctx.strokeStyle = color;
-                    ctx.lineWidth = 4;
-                    ctx.strokeRect(face.x1, face.y1, w, h);
-                    
-                    // Vẽ nhãn (Tên - Giới tính)
-                    ctx.fillStyle = color;
-                    ctx.font = "bold 20px Arial";
-                    const label = `${face.name} (${face.gender})`;
-                    
-                    // Vẽ nền cho chữ để dễ nhìn
-                    const textWidth = ctx.measureText(label).width;
-                    ctx.fillRect(face.x1 - 2, (face.y1 > 35 ? face.y1 - 35 : 0), textWidth + 10, 30);
-                    
-                    // Viết chữ trắng lên nền màu
-                    ctx.fillStyle = "white";
-                    ctx.fillText(label, face.x1 + 3, (face.y1 > 35 ? face.y1 - 12 : 22));
-                }
-            }
-        } catch (error) {
-            console.error("Lỗi gửi server:", error);
-        }
+    function connectWebSocket() {
+        statusText.innerText = "Đang kết nối tới AI Server...";
+        statusText.style.color = "orange";
         
-        // Tiếp tục vòng lặp
-        requestAnimationFrame(sendFrameToServer);
+        // Khởi tạo kết nối tới endpoint WebSocket của FastAPI
+        ws = new WebSocket("ws://127.0.0.1:8000/ws/detect");
+
+        ws.onopen = () => {
+            statusText.innerText = "Hệ thống AI đang quét khuôn mặt... (WebSocket Active)";
+            statusText.style.color = "#00ff00";
+            sendFrameToServer(); // Mở ống nước thành công thì bơm frame đầu tiên
+        };
+
+        ws.onmessage = (event) => {
+            // Nhận kết quả từ Server
+            const data = JSON.parse(event.data);
+            drawResults(data);
+            
+            // Vẽ xong thì tiếp tục vòng lặp: gửi frame tiếp theo
+            requestAnimationFrame(sendFrameToServer);
+        };
+
+        ws.onerror = (error) => {
+            console.error("Lỗi WebSocket:", error);
+            statusText.innerText = "Lỗi: Mất kết nối tới Server!";
+            statusText.style.color = "red";
+        };
+
+        ws.onclose = () => {
+            statusText.innerText = "Đã ngắt kết nối WebSocket.";
+            statusText.style.color = "gray";
+        };
+    }
+
+    function sendFrameToServer() {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            capCtx.drawImage(video, 0, 0, 640, 480);
+            
+            // Nén ảnh ra base64. Không cần FormData rườm rà nữa.
+            const base64Image = captureCanvas.toDataURL('image/jpeg', 0.5); 
+            
+            // Bắn trực tiếp chuỗi string qua WebSocket
+            ws.send(base64Image);
+        }
+    }
+
+    function drawResults(data) {
+        // Xóa khung hình cũ
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        if (data.matches && data.matches.length > 0) {
+            for (let face of data.matches) {
+                const w = face.x2 - face.x1;
+                const h = face.y2 - face.y1;
+                
+                // Đổi màu: Xanh cho người quen, Đỏ cho Unknown
+                const isUnknown = face.name === "Unknown";
+                const color = isUnknown ? "#ff4757" : "#2ed573";
+                
+                // Vẽ Bounding Box
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 4;
+                ctx.strokeRect(face.x1, face.y1, w, h);
+                
+                // Vẽ nhãn (Tên - Giới tính)
+                ctx.fillStyle = color;
+                ctx.font = "bold 20px Arial";
+                const label = `${face.name} (${face.gender})`;
+                
+                // Vẽ nền cho chữ để dễ nhìn
+                const textWidth = ctx.measureText(label).width;
+                ctx.fillRect(face.x1 - 2, (face.y1 > 35 ? face.y1 - 35 : 0), textWidth + 10, 30);
+                
+                // Viết chữ trắng lên nền màu
+                ctx.fillStyle = "white";
+                ctx.fillText(label, face.x1 + 3, (face.y1 > 35 ? face.y1 - 12 : 22));
+            }
+        }
     }
 
     startSystem();
-</script>
+    </script>
 </body>
 </html>
