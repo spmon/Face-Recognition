@@ -1,0 +1,24 @@
+# --- Core Web Framework ---
+fastapi
+uvicorn[standard]
+python-multipart
+python-dotenv
+
+# --- Deep Learning Core (PyTorch) ---
+# Mặc định pip sẽ cài bản CPU. Để dùng GPU, hãy cài theo lệnh riêng (xem README).
+torch
+torchvision
+torchaudio
+
+# --- AI Engines & Models ---
+ultralytics
+insightface
+onnxruntime-gpu
+
+# --- Computer Vision & Math ---
+opencv-python
+numpy
+
+# --- Database (PostgreSQL + Vector) ---
+psycopg2-binary
+pgvector

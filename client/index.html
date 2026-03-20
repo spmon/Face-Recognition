@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Hệ thống Nhận diện - Edge AI</title>
+    <style>
+        body { text-align: center; font-family: Arial, sans-serif; background: #1e1e1e; color: white; padding-top: 30px; }
+        .camera-container { position: relative; display: inline-block; margin-top: 20px; }
+        video, canvas { border: 2px solid #00ff00; border-radius: 8px; width: 640px; height: 480px; }
+        #overlay { position: absolute; top: 0; left: 0; z-index: 10; }
+        .nav-btn { background: #e67e22; color: white; padding: 10px 20px; border-radius: 5px; border: none; cursor: pointer; font-weight: bold; font-size: 16px; margin-bottom: 20px; }
+        .nav-btn:hover { background: #d35400; }
+        #status { font-size: 18px; color: #ffeb3b; margin-top: 15px; }
+    </style>
+</head>
+<body>
+    <h2>Hệ thống Nhận diện Khuôn mặt (Real-time)</h2>
+    
+    <button class="nav-btn" onclick="window.location.href='register.html'">➕ Sang trang Đăng ký người dùng</button>
+
+    <div class="camera-container">
+        <video id="webcam" autoplay playsinline></video>
+        <canvas id="overlay"></canvas>
+    </div>
+
+    <p id="status">Trạng thái: Đang khởi động Camera...</p>
+
+    <script>
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('overlay');
+    const ctx = canvas.getContext('2d');
+    const statusText = document.getElementById('status');
+
+    canvas.width = 640;
+    canvas.height = 480;
+
+    const captureCanvas = document.createElement('canvas');
+    captureCanvas.width = 640;
+    captureCanvas.height = 480;
+    const capCtx = captureCanvas.getContext('2d');
+
+    async function startSystem() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+            video.srcObject = stream;
+            statusText.innerText = "Hệ thống AI đang quét khuôn mặt...";
+            statusText.style.color = "#00ff00";
+            
+            video.onloadedmetadata = () => { sendFrameToServer(); };
+        } catch (e) {
+            statusText.innerText = "Lỗi: Không mở được Camera!";
+            statusText.style.color = "red";
+        }
+    }
+
+    async function sendFrameToServer() {
+        // 1. Chụp frame và nén lại để giảm độ trễ
+        capCtx.drawImage(video, 0, 0, 640, 480);
+        const base64Image = captureCanvas.toDataURL('image/jpeg', 0.5); 
+
+        const formData = new FormData();
+        formData.append("image_base64", base64Image);
+
+        try {
+            // 2. Gọi API detect (vừa detect vừa search vector)
+            const response = await fetch('http://127.0.0.1:8000/detect', { method: 'POST', body: formData });
+            const data = await response.json();
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // 3. Xử lý kết quả trả về từ trường "matches" trong main.py
+            if (data.matches && data.matches.length > 0) {
+                for (let face of data.matches) {
+                    const w = face.x2 - face.x1;
+                    const h = face.y2 - face.y1;
+                    
+                    // --- Đổi màu: Xanh cho người quen, Đỏ cho Unknown ---
+                    const isUnknown = face.name === "Unknown";
+                    const color = isUnknown ? "#ff4757" : "#2ed573";
+                    
+                    // Vẽ Bounding Box
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 4;
+                    ctx.strokeRect(face.x1, face.y1, w, h);
+                    
+                    // Vẽ nhãn (Tên - Giới tính)
+                    ctx.fillStyle = color;
+                    ctx.font = "bold 20px Arial";
+                    const label = `${face.name} (${face.gender})`;
+                    
+                    // Vẽ nền cho chữ để dễ nhìn
+                    const textWidth = ctx.measureText(label).width;
+                    ctx.fillRect(face.x1 - 2, (face.y1 > 35 ? face.y1 - 35 : 0), textWidth + 10, 30);
+                    
+                    // Viết chữ trắng lên nền màu
+                    ctx.fillStyle = "white";
+                    ctx.fillText(label, face.x1 + 3, (face.y1 > 35 ? face.y1 - 12 : 22));
+                }
+            }
+        } catch (error) {
+            console.error("Lỗi gửi server:", error);
+        }
+        
+        // Tiếp tục vòng lặp
+        requestAnimationFrame(sendFrameToServer);
+    }
+
+    startSystem();
+</script>
+</body>
+</html>
